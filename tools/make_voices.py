@@ -65,12 +65,12 @@ def main():
 
     items = [it for group in cfg["lines"].values() for it in group]
     done = 0
+    warned = False
     for it in items:
         if only and it["id"] not in only:
             continue
-        ext = ".m4a" if use_m4a else ".wav"
-        dst = OUT / (it["id"] + ext)
-        if dst.exists() and not args.force and not only:
+        exists = any((OUT / (it["id"] + e)).exists() for e in (".m4a", ".wav"))
+        if exists and not args.force and not only:
             continue
         # 「〜」は VOICEVOX だと読まれないことがあるので長音「ー」にする
         text = it["text"].replace("〜", "ー").replace("～", "ー")
@@ -80,11 +80,22 @@ def main():
         q["intonationScale"] = v.get("intonationScale", 1.0)
         wav = call("POST", "/synthesis", {"speaker": sid}, q)
         tmp = OUT / (it["id"] + ".wav")
+        m4a = OUT / (it["id"] + ".m4a")
         tmp.write_bytes(wav)
+        if m4a.exists():
+            m4a.unlink()
         if use_m4a:
-            subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", "-b", "96000",
-                            str(tmp), str(dst)], check=True)
-            tmp.unlink()
+            # 圧縮できなかったら .wav のまま使う（アプリはどっちでも再生できる）
+            r = subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", str(tmp), str(m4a)],
+                               capture_output=True, text=True)
+            if r.returncode == 0 and m4a.exists():
+                tmp.unlink()
+            else:
+                if m4a.exists():
+                    m4a.unlink()
+                if not warned:
+                    print("  （m4a に圧縮できなかったので wav のままにするね: " + (r.stderr.strip() or "原因不明") + "）")
+                    warned = True
         done += 1
         print(f"  ✓ {it['id']}: {it['text']}")
 
